@@ -23,6 +23,50 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
       
+    - name: Install NDK
+      run: |
+        sdkmanager --install "ndk;27.2.12479018"
+        
+    - name: Clone llama.cpp
+      run: |
+        git clone https://github.com/ggerganov/llama.cpp.git
+        cd llama.cpp
+        git checkout b2566
+        
+    - name: Build llama.cpp for Android
+      run: |
+        cd llama.cpp
+        mkdir -p build-android
+        cd build-android
+        
+        cmake .. \
+          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_HOME/ndk/27.2.12479018/build/cmake/android.toolchain.cmake \
+          -DANDROID_ABI=arm64-v8a \
+          -DANDROID_PLATFORM=android-24 \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DGGML_VULKAN=OFF \
+          -DLLAMA_BUILD_TESTS=OFF \
+          -DLLAMA_BUILD_EXAMPLES=OFF \
+          -DLLAMA_BUILD_TOOLS=OFF \
+          -DBUILD_SHARED_LIBS=ON \
+          -DLLAMA_CURL=OFF
+          
+        make -j$(nproc) llama ggml
+        
+    - name: Copy native libraries and headers
+      run: |
+        mkdir -p app/src/main/jniLibs/arm64-v8a
+        mkdir -p app/src/main/cpp/llama-include
+        # Copy .so files
+        cp llama.cpp/build-android/bin/libllama.so app/src/main/jniLibs/arm64-v8a/ 2>/dev/null || \
+          cp llama.cpp/build-android/libllama.so app/src/main/jniLibs/arm64-v8a/ 2>/dev/null || true
+        cp llama.cpp/build-android/bin/libggml.so app/src/main/jniLibs/arm64-v8a/ 2>/dev/null || \
+          cp llama.cpp/build-android/libggml.so app/src/main/jniLibs/arm64-v8a/ 2>/dev/null || true
+        # Copy headers
+        find llama.cpp -name "llama.h" -exec cp {} app/src/main/cpp/llama-include/ \;
+        find llama.cpp -name "ggml*.h" -exec cp {} app/src/main/cpp/llama-include/ \; 2>/dev/null || true
+        cp llama.cpp/*.h app/src/main/cpp/llama-include/ 2>/dev/null || true
+        
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v4
       with:

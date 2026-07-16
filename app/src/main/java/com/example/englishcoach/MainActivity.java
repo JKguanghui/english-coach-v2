@@ -4,7 +4,6 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.media.AudioManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -25,6 +24,10 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -58,6 +61,10 @@ public class MainActivity extends AppCompatActivity {
     private boolean isCallActive = false;
     private boolean isTtsSpeaking = false;
     private final AtomicBoolean isProcessing = new AtomicBoolean(false);
+
+    // LLM
+    private LLMEngine llmEngine;
+    private boolean llmReady = false;
 
     // State
     private boolean isInitialized = false;
@@ -148,7 +155,6 @@ public class MainActivity extends AppCompatActivity {
             public void onError(int error) {
                 Log.e(TAG, "Speech error: " + error);
                 if (isCallActive && !isTtsSpeaking) {
-                    // Restart listening
                     handler.postDelayed(() -> startListening(), 500);
                 }
             }
@@ -168,7 +174,6 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
                 
-                // Restart listening if call is active
                 if (isCallActive && !isTtsSpeaking) {
                     handler.postDelayed(() -> startListening(), 500);
                 }
@@ -199,7 +204,6 @@ public class MainActivity extends AppCompatActivity {
                     @Override
                     public void onDone(String utteranceId) {
                         isTtsSpeaking = false;
-                        // Restart listening after TTS finishes
                         if (isCallActive) {
                             handler.postDelayed(() -> startListening(), 300);
                         }
@@ -220,8 +224,22 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        // Init LLM
+        llmEngine = new LLMEngine(this);
+        new Thread(() -> {
+            boolean ok = llmEngine.loadModel();
+            llmReady = ok;
+            handler.post(() -> {
+                if (ok) {
+                    tvStatus.setText("Ready");
+                } else {
+                    tvStatus.setText("LLM load failed");
+                }
+            });
+        }).start();
+
         isInitialized = true;
-        tvStatus.setText("Ready");
+        tvStatus.setText("Loading model...");
     }
 
     private void toggleCall() {
@@ -232,6 +250,11 @@ public class MainActivity extends AppCompatActivity {
 
         if (!ttsReady) {
             Toast.makeText(this, "TTS still loading", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (!llmReady) {
+            Toast.makeText(this, "LLM still loading", Toast.LENGTH_SHORT).show();
             return;
         }
 
@@ -294,14 +317,9 @@ public class MainActivity extends AppCompatActivity {
     private void processWithLLM(String userText) {
         tvStatus.setText("Thinking...");
         
-        // TODO: Replace with actual Qwen LLM call
-        // For now, simulate response
         new Thread(() -> {
             try {
-                // Simulate LLM processing
-                Thread.sleep(1000);
-                
-                String response = generateResponse(userText);
+                String response = llmEngine.generate(SYSTEM_PROMPT, userText);
                 
                 handler.post(() -> {
                     tvAiSubtitle.append(response + "\n");
@@ -310,27 +328,14 @@ public class MainActivity extends AppCompatActivity {
                     isProcessing.set(false);
                     speak(response);
                 });
-            } catch (InterruptedException e) {
-                Log.e(TAG, "LLM processing interrupted", e);
-                isProcessing.set(false);
+            } catch (Exception e) {
+                Log.e(TAG, "LLM processing failed", e);
+                handler.post(() -> {
+                    isProcessing.set(false);
+                    tvStatus.setText("Error: " + e.getMessage());
+                });
             }
         }).start();
-    }
-
-    private String generateResponse(String userText) {
-        // TODO: Replace with actual Qwen LLM
-        // Simple rule-based response for testing
-        String lower = userText.toLowerCase();
-        
-        if (lower.contains("hello") || lower.contains("hi")) {
-            return "Hello! Great to see you. What would you like to practice today?";
-        } else if (lower.contains("grammar")) {
-            return "Sure! Try saying a sentence and I'll check it for you.";
-        } else if (lower.contains("order") || lower.contains("restaurant")) {
-            return "Let's practice ordering food. I'll be the waiter. Go ahead!";
-        } else {
-            return "That's good! Try speaking in a complete sentence. For example: \"I want to practice ordering food at a restaurant.\"";
-        }
     }
 
     private void speak(String text) {
@@ -351,6 +356,9 @@ public class MainActivity extends AppCompatActivity {
         if (tts != null) {
             tts.stop();
             tts.shutdown();
+        }
+        if (llmEngine != null) {
+            llmEngine.destroy();
         }
     }
 }
