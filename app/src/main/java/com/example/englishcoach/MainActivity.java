@@ -325,6 +325,8 @@ public class MainActivity extends AppCompatActivity {
 
     private void startCall() {
         isCallActive = true;
+        isTtsSpeaking = false;
+        isProcessing.set(false);
         btnCall.setText("End");
         btnCall.setBackgroundColor(0xFFE53935);
         tvUserSubtitle.setText("");
@@ -336,6 +338,9 @@ public class MainActivity extends AppCompatActivity {
         tvAiSubtitle.append(welcome + "\n");
         scrollAi.post(() -> scrollAi.fullScroll(View.FOCUS_DOWN));
         speak(welcome);
+        
+        // Start listening immediately after a short delay
+        handler.postDelayed(() -> startListening(), 1000);
     }
 
     private void endCall() {
