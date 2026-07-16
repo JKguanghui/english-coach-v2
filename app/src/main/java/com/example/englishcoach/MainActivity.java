@@ -1,16 +1,18 @@
 package com.example.englishcoach;
 
 import android.Manifest;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.media.AudioFormat;
-import android.media.AudioRecord;
-import android.media.AudioTrack;
-import android.media.MediaRecorder;
-import android.media.audiofx.AcousticEchoCanceler;
+import android.media.AudioManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
@@ -23,10 +25,13 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import java.util.ArrayList;
+import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "EnglishCoach";
     private static final int REQ_AUDIO = 100;
-    private static final int SAMPLE_RATE = 16000;
     private static final String PREF_NAME = "english_coach_prefs";
     private static final String KEY_AGREED = "is_agreed";
 
@@ -47,14 +52,16 @@ public class MainActivity extends AppCompatActivity {
     private ScrollView scrollAi;
     private Handler handler = new Handler(Looper.getMainLooper());
 
-    // Audio
-    private AudioRecord audioRecord;
-    private AcousticEchoCanceler aec;
+    // Speech
+    private SpeechRecognizer speechRecognizer;
+    private TextToSpeech tts;
     private boolean isCallActive = false;
-    private Thread recordingThread;
+    private boolean isTtsSpeaking = false;
+    private final AtomicBoolean isProcessing = new AtomicBoolean(false);
 
     // State
     private boolean isInitialized = false;
+    private boolean ttsReady = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -98,7 +105,7 @@ public class MainActivity extends AppCompatActivity {
             ActivityCompat.requestPermissions(this, 
                 new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO);
         } else {
-            initAudio();
+            initSpeech();
         }
     }
 
@@ -106,28 +113,112 @@ public class MainActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int req, @NonNull String[] perms, @NonNull int[] results) {
         super.onRequestPermissionsResult(req, perms, results);
         if (req == REQ_AUDIO && results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
-            initAudio();
+            initSpeech();
         } else {
             Toast.makeText(this, "Microphone permission required", Toast.LENGTH_SHORT).show();
         }
     }
 
-    private void initAudio() {
-        int bufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
-        
-        audioRecord = new AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-            SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, 
-            AudioFormat.ENCODING_PCM_16BIT, bufferSize * 2);
-
-        // Enable AEC
-        if (AcousticEchoCanceler.isAvailable()) {
-            aec = AcousticEchoCanceler.create(audioRecord.getAudioSessionId());
-            if (aec != null) {
-                aec.setEnabled(true);
-                Log.i(TAG, "AEC enabled");
+    private void initSpeech() {
+        // Init SpeechRecognizer
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
+        speechRecognizer.setRecognitionListener(new RecognitionListener() {
+            @Override
+            public void onReadyForSpeech(Bundle params) {
+                Log.i(TAG, "Ready for speech");
             }
-        }
+
+            @Override
+            public void onBeginningOfSpeech() {
+                Log.i(TAG, "Speech started");
+            }
+
+            @Override
+            public void onRmsChanged(float rmsdB) {}
+
+            @Override
+            public void onBufferReceived(byte[] buffer) {}
+
+            @Override
+            public void onEndOfSpeech() {
+                Log.i(TAG, "Speech ended");
+            }
+
+            @Override
+            public void onError(int error) {
+                Log.e(TAG, "Speech error: " + error);
+                if (isCallActive && !isTtsSpeaking) {
+                    // Restart listening
+                    handler.postDelayed(() -> startListening(), 500);
+                }
+            }
+
+            @Override
+            public void onResults(Bundle results) {
+                ArrayList<String> matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                if (matches != null && !matches.isEmpty()) {
+                    String text = matches.get(0);
+                    Log.i(TAG, "Recognized: " + text);
+                    handler.post(() -> tvUserSubtitle.setText(text));
+                    
+                    // Process with LLM
+                    if (!isProcessing.get()) {
+                        isProcessing.set(true);
+                        processWithLLM(text);
+                    }
+                }
+                
+                // Restart listening if call is active
+                if (isCallActive && !isTtsSpeaking) {
+                    handler.postDelayed(() -> startListening(), 500);
+                }
+            }
+
+            @Override
+            public void onPartialResults(Bundle partialResults) {
+                ArrayList<String> partial = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                if (partial != null && !partial.isEmpty()) {
+                    handler.post(() -> tvUserSubtitle.setText(partial.get(0) + "..."));
+                }
+            }
+
+            @Override
+            public void onEvent(int eventType, Bundle params) {}
+        });
+
+        // Init TTS
+        tts = new TextToSpeech(this, status -> {
+            if (status == TextToSpeech.SUCCESS) {
+                tts.setLanguage(Locale.US);
+                tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                    @Override
+                    public void onStart(String utteranceId) {
+                        isTtsSpeaking = true;
+                    }
+
+                    @Override
+                    public void onDone(String utteranceId) {
+                        isTtsSpeaking = false;
+                        // Restart listening after TTS finishes
+                        if (isCallActive) {
+                            handler.postDelayed(() -> startListening(), 300);
+                        }
+                    }
+
+                    @Override
+                    public void onError(String utteranceId) {
+                        isTtsSpeaking = false;
+                        if (isCallActive) {
+                            handler.postDelayed(() -> startListening(), 300);
+                        }
+                    }
+                });
+                ttsReady = true;
+                Log.i(TAG, "TTS initialized");
+            } else {
+                Log.e(TAG, "TTS initialization failed");
+            }
+        });
 
         isInitialized = true;
         tvStatus.setText("Ready");
@@ -136,6 +227,11 @@ public class MainActivity extends AppCompatActivity {
     private void toggleCall() {
         if (!isInitialized) {
             Toast.makeText(this, "Not ready", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (!ttsReady) {
+            Toast.makeText(this, "TTS still loading", Toast.LENGTH_SHORT).show();
             return;
         }
 
@@ -154,59 +250,107 @@ public class MainActivity extends AppCompatActivity {
         tvAiSubtitle.setText("");
         tvStatus.setText("Listening...");
 
-        // Start recording
-        audioRecord.startRecording();
-
-        recordingThread = new Thread(() -> {
-            short[] buffer = new short[1024];
-            while (isCallActive) {
-                int read = audioRecord.read(buffer, 0, buffer.length);
-                if (read > 0) {
-                    // TODO: Process with VAD + STT
-                    // For now, just show we're listening
-                    handler.post(() -> tvUserSubtitle.setText("Listening..."));
-                }
-            }
-        });
-        recordingThread.start();
-
         // Welcome message
-        appendAiMessage("Hi! I'm your English tutor. What would you like to practice today?");
-        ttsSpeak("Hi! I'm your English tutor. What would you like to practice today?");
+        String welcome = "Hi! I'm your English tutor. What would you like to practice today?";
+        tvAiSubtitle.append(welcome + "\n");
+        scrollAi.post(() -> scrollAi.fullScroll(View.FOCUS_DOWN));
+        speak(welcome);
     }
 
     private void endCall() {
         isCallActive = false;
+        isTtsSpeaking = false;
+        isProcessing.set(false);
         btnCall.setText("Start");
         btnCall.setBackgroundColor(0xFF4CAF50);
         tvStatus.setText("Ready");
 
-        if (audioRecord != null) {
-            audioRecord.stop();
+        if (speechRecognizer != null) {
+            speechRecognizer.stopListening();
+        }
+        if (tts != null) {
+            tts.stop();
         }
     }
 
-    private void appendAiMessage(String text) {
-        tvAiSubtitle.append(text + "\n");
-        scrollAi.post(() -> scrollAi.fullScroll(View.FOCUS_DOWN));
+    private void startListening() {
+        if (!isCallActive || isTtsSpeaking || isProcessing.get()) {
+            return;
+        }
+
+        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US");
+        intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+        
+        try {
+            speechRecognizer.startListening(intent);
+            tvStatus.setText("Listening...");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to start listening", e);
+        }
     }
 
-    private void ttsSpeak(String text) {
-        // TODO: Integrate TTS
-        Log.i(TAG, "TTS: " + text);
+    private void processWithLLM(String userText) {
+        tvStatus.setText("Thinking...");
+        
+        // TODO: Replace with actual Qwen LLM call
+        // For now, simulate response
+        new Thread(() -> {
+            try {
+                // Simulate LLM processing
+                Thread.sleep(1000);
+                
+                String response = generateResponse(userText);
+                
+                handler.post(() -> {
+                    tvAiSubtitle.append(response + "\n");
+                    scrollAi.post(() -> scrollAi.fullScroll(View.FOCUS_DOWN));
+                    tvStatus.setText("Speaking...");
+                    isProcessing.set(false);
+                    speak(response);
+                });
+            } catch (InterruptedException e) {
+                Log.e(TAG, "LLM processing interrupted", e);
+                isProcessing.set(false);
+            }
+        }).start();
+    }
+
+    private String generateResponse(String userText) {
+        // TODO: Replace with actual Qwen LLM
+        // Simple rule-based response for testing
+        String lower = userText.toLowerCase();
+        
+        if (lower.contains("hello") || lower.contains("hi")) {
+            return "Hello! Great to see you. What would you like to practice today?";
+        } else if (lower.contains("grammar")) {
+            return "Sure! Try saying a sentence and I'll check it for you.";
+        } else if (lower.contains("order") || lower.contains("restaurant")) {
+            return "Let's practice ordering food. I'll be the waiter. Go ahead!";
+        } else {
+            return "That's good! Try speaking in a complete sentence. For example: \"I want to practice ordering food at a restaurant.\"";
+        }
+    }
+
+    private void speak(String text) {
+        if (tts != null && ttsReady) {
+            Bundle params = new Bundle();
+            params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "tts_" + System.currentTimeMillis());
+            tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, "tts_" + System.currentTimeMillis());
+        }
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
         isCallActive = false;
-        if (audioRecord != null) {
-            audioRecord.release();
-            audioRecord = null;
+        if (speechRecognizer != null) {
+            speechRecognizer.destroy();
         }
-        if (aec != null) {
-            aec.release();
-            aec = null;
+        if (tts != null) {
+            tts.stop();
+            tts.shutdown();
         }
     }
 }
