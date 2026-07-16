@@ -15,6 +15,16 @@
         android:textSize="14sp"
         android:layout_marginBottom="8dp" />
 
+    <!-- Progress -->
+    <ProgressBar
+        android:id="@+id/progressBar"
+        style="@android:style/Widget.ProgressBar.Horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"
+        android:visibility="gone"
+        android:layout_marginBottom="8dp" />
+
     <!-- User subtitle -->
     <TextView
         android:id="@+id/tvUserSubtitle"
@@ -45,7 +55,18 @@
             android:lineSpacingMultiplier="1.2" />
     </ScrollView>
 
-    <!-- Call button (like phone call) -->
+    <!-- Download button -->
+    <Button
+        android:id="@+id/btnDownload"
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:text="Download AI Model"
+        android:textSize="16sp"
+        android:backgroundTint="#FF9800"
+        android:visibility="gone"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Call button -->
     <Button
         android:id="@+id/btnCall"
         android:layout_width="120dp"
@@ -53,7 +74,8 @@
         android:layout_gravity="center"
         android:text="Start"
         android:textSize="16sp"
-        android:backgroundTint="#4CAF50" />
+        android:backgroundTint="#4CAF50"
+        android:visibility="gone" />
 
     <!-- Disclaimer -->
     <TextView

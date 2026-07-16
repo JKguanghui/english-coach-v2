@@ -15,6 +15,7 @@ import android.speech.tts.UtteranceProgressListener;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -25,9 +26,6 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -51,7 +49,8 @@ public class MainActivity extends AppCompatActivity {
 
     // UI
     private TextView tvStatus, tvUserSubtitle, tvAiSubtitle;
-    private Button btnCall;
+    private Button btnCall, btnDownload;
+    private ProgressBar progressBar;
     private ScrollView scrollAi;
     private Handler handler = new Handler(Looper.getMainLooper());
 
@@ -64,6 +63,7 @@ public class MainActivity extends AppCompatActivity {
 
     // LLM
     private LLMEngine llmEngine;
+    private ModelDownloadManager downloadManager;
     private boolean llmReady = false;
 
     // State
@@ -100,10 +100,15 @@ public class MainActivity extends AppCompatActivity {
         tvUserSubtitle = findViewById(R.id.tvUserSubtitle);
         tvAiSubtitle = findViewById(R.id.tvAiSubtitle);
         btnCall = findViewById(R.id.btnCall);
+        btnDownload = findViewById(R.id.btnDownload);
+        progressBar = findViewById(R.id.progressBar);
         scrollAi = findViewById(R.id.scrollAi);
 
         // Call button
         btnCall.setOnClickListener(v -> toggleCall());
+        
+        // Download button
+        btnDownload.setOnClickListener(v -> startDownload());
     }
 
     private void checkPermission() {
@@ -112,7 +117,7 @@ public class MainActivity extends AppCompatActivity {
             ActivityCompat.requestPermissions(this, 
                 new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO);
         } else {
-            initSpeech();
+            initApp();
         }
     }
 
@@ -120,13 +125,27 @@ public class MainActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int req, @NonNull String[] perms, @NonNull int[] results) {
         super.onRequestPermissionsResult(req, perms, results);
         if (req == REQ_AUDIO && results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
-            initSpeech();
+            initApp();
         } else {
             Toast.makeText(this, "Microphone permission required", Toast.LENGTH_SHORT).show();
         }
     }
 
-    private void initSpeech() {
+    private void initApp() {
+        // Init download manager
+        downloadManager = new ModelDownloadManager(this);
+        
+        // Check if model exists
+        if (ModelDownloadManager.isQwenReady(this)) {
+            // Model exists, load it
+            loadModel();
+        } else {
+            // Model not found, show download button
+            tvStatus.setText("Download AI model first");
+            btnDownload.setVisibility(View.VISIBLE);
+            btnCall.setVisibility(View.GONE);
+        }
+
         // Init SpeechRecognizer
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
         speechRecognizer.setRecognitionListener(new RecognitionListener() {
@@ -224,7 +243,14 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // Init LLM
+        isInitialized = true;
+    }
+
+    private void loadModel() {
+        tvStatus.setText("Loading model...");
+        btnDownload.setVisibility(View.GONE);
+        btnCall.setVisibility(View.VISIBLE);
+        
         llmEngine = new LLMEngine(this);
         new Thread(() -> {
             boolean ok = llmEngine.loadModel();
@@ -233,13 +259,45 @@ public class MainActivity extends AppCompatActivity {
                 if (ok) {
                     tvStatus.setText("Ready");
                 } else {
-                    tvStatus.setText("LLM load failed");
+                    tvStatus.setText("Model load failed");
                 }
             });
         }).start();
+    }
 
-        isInitialized = true;
-        tvStatus.setText("Loading model...");
+    private void startDownload() {
+        btnDownload.setEnabled(false);
+        progressBar.setVisibility(View.VISIBLE);
+        progressBar.setProgress(0);
+        
+        downloadManager.downloadQwenModel(new ModelDownloadManager.DownloadCallback() {
+            @Override
+            public void onProgress(int percent, long downloaded, long total) {
+                handler.post(() -> progressBar.setProgress(percent));
+            }
+
+            @Override
+            public void onSuccess(File file) {
+                handler.post(() -> {
+                    progressBar.setVisibility(View.GONE);
+                    loadModel();
+                });
+            }
+
+            @Override
+            public void onError(String error) {
+                handler.post(() -> {
+                    tvStatus.setText("Download failed: " + error);
+                    btnDownload.setEnabled(true);
+                    progressBar.setVisibility(View.GONE);
+                });
+            }
+
+            @Override
+            public void onStatusUpdate(String status) {
+                handler.post(() -> tvStatus.setText(status));
+            }
+        });
     }
 
     private void toggleCall() {
