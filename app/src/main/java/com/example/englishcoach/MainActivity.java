@@ -12,7 +12,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ScrollView;
@@ -44,14 +43,14 @@ public class MainActivity extends AppCompatActivity {
 
     // UI
     private TextView tvStatus, tvUserSubtitle, tvAiSubtitle;
-    private Button btnTalk;
+    private Button btnCall;
     private ScrollView scrollAi;
     private Handler handler = new Handler(Looper.getMainLooper());
 
     // Audio
     private AudioRecord audioRecord;
     private AcousticEchoCanceler aec;
-    private boolean isRecording = false;
+    private boolean isCallActive = false;
     private Thread recordingThread;
 
     // State
@@ -86,22 +85,11 @@ public class MainActivity extends AppCompatActivity {
         tvStatus = findViewById(R.id.tvStatus);
         tvUserSubtitle = findViewById(R.id.tvUserSubtitle);
         tvAiSubtitle = findViewById(R.id.tvAiSubtitle);
-        btnTalk = findViewById(R.id.btnTalk);
+        btnCall = findViewById(R.id.btnCall);
         scrollAi = findViewById(R.id.scrollAi);
 
-        // Push-to-talk button
-        btnTalk.setOnTouchListener((v, event) -> {
-            switch (event.getAction()) {
-                case MotionEvent.ACTION_DOWN:
-                    startRecording();
-                    return true;
-                case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL:
-                    stopRecording();
-                    return true;
-            }
-            return false;
-        });
+        // Call button
+        btnCall.setOnClickListener(v -> toggleCall());
     }
 
     private void checkPermission() {
@@ -132,7 +120,7 @@ public class MainActivity extends AppCompatActivity {
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, 
             AudioFormat.ENCODING_PCM_16BIT, bufferSize * 2);
 
-        // Enable AEC if available
+        // Enable AEC
         if (AcousticEchoCanceler.isAvailable()) {
             aec = AcousticEchoCanceler.create(audioRecord.getAudioSessionId());
             if (aec != null) {
@@ -142,64 +130,76 @@ public class MainActivity extends AppCompatActivity {
         }
 
         isInitialized = true;
-        tvStatus.setText("Ready - Hold to talk");
+        tvStatus.setText("Ready");
     }
 
-    private void startRecording() {
-        if (!isInitialized || audioRecord == null) {
+    private void toggleCall() {
+        if (!isInitialized) {
             Toast.makeText(this, "Not ready", Toast.LENGTH_SHORT).show();
             return;
         }
 
-        isRecording = true;
-        btnTalk.setText("Listening...");
-        btnTalk.setBackgroundColor(0xFFE53935);
-        tvUserSubtitle.setText("");
+        if (isCallActive) {
+            endCall();
+        } else {
+            startCall();
+        }
+    }
 
+    private void startCall() {
+        isCallActive = true;
+        btnCall.setText("End");
+        btnCall.setBackgroundColor(0xFFE53935);
+        tvUserSubtitle.setText("");
+        tvAiSubtitle.setText("");
+        tvStatus.setText("Listening...");
+
+        // Start recording
         audioRecord.startRecording();
 
         recordingThread = new Thread(() -> {
             short[] buffer = new short[1024];
-            while (isRecording) {
+            while (isCallActive) {
                 int read = audioRecord.read(buffer, 0, buffer.length);
                 if (read > 0) {
-                    // TODO: Process audio with Sherpa-ONNX VAD + STT
-                    // For now, just show that we're recording
-                    handler.post(() -> tvUserSubtitle.setText("Recording... " + read + " samples"));
+                    // TODO: Process with VAD + STT
+                    // For now, just show we're listening
+                    handler.post(() -> tvUserSubtitle.setText("Listening..."));
                 }
             }
         });
         recordingThread.start();
+
+        // Welcome message
+        appendAiMessage("Hi! I'm your English tutor. What would you like to practice today?");
+        ttsSpeak("Hi! I'm your English tutor. What would you like to practice today?");
     }
 
-    private void stopRecording() {
-        isRecording = false;
-        btnTalk.setText("Hold to Talk");
-        btnTalk.setBackgroundColor(0xFF4CAF50);
+    private void endCall() {
+        isCallActive = false;
+        btnCall.setText("Start");
+        btnCall.setBackgroundColor(0xFF4CAF50);
+        tvStatus.setText("Ready");
 
         if (audioRecord != null) {
             audioRecord.stop();
         }
-
-        // TODO: Process recorded audio with STT
-        handler.post(() -> {
-            tvUserSubtitle.setText("Processing...");
-            // Simulate AI response
-            simulateAIResponse();
-        });
     }
 
-    private void simulateAIResponse() {
-        // TODO: Replace with actual LLM call
-        String response = "Hello! I'm your English tutor. What would you like to practice today?";
-        tvAiSubtitle.append(response + "\n");
+    private void appendAiMessage(String text) {
+        tvAiSubtitle.append(text + "\n");
         scrollAi.post(() -> scrollAi.fullScroll(View.FOCUS_DOWN));
-        tvStatus.setText("Ready - Hold to talk");
+    }
+
+    private void ttsSpeak(String text) {
+        // TODO: Integrate TTS
+        Log.i(TAG, "TTS: " + text);
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        isCallActive = false;
         if (audioRecord != null) {
             audioRecord.release();
             audioRecord = null;
