@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <!-- Status -->
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Initializing..."
+        android:textAlignment="center"
+        android:textSize="14sp"
+        android:layout_marginBottom="8dp" />
+
+    <!-- User subtitle -->
+    <TextView
+        android:id="@+id/tvUserSubtitle"
+        android:layout_width="match_parent"
+        android:layout_height="80dp"
+        android:gravity="center"
+        android:textColor="#666666"
+        android:textSize="18sp"
+        android:background="#F5F5F5"
+        android:layout_marginBottom="8dp" />
+
+    <!-- AI subtitle -->
+    <ScrollView
+        android:id="@+id/scrollAi"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#E8F5E9"
+        android:padding="12dp"
+        android:layout_marginBottom="8dp">
+
+        <TextView
+            android:id="@+id/tvAiSubtitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#333333"
+            android:textSize="16sp"
+            android:lineSpacingMultiplier="1.2" />
+    </ScrollView>
+
+    <!-- Big button -->
+    <Button
+        android:id="@+id/btnTalk"
+        android:layout_width="match_parent"
+        android:layout_height="80dp"
+        android:text="Hold to Talk"
+        android:textSize="18sp"
+        android:backgroundTint="#4CAF50" />
+
+    <!-- Disclaimer -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="AI generated content is for reference only."
+        android:textColor="#999999"
+        android:textSize="10sp"
+        android:textAlignment="center"
+        android:layout_marginTop="8dp" />
+</LinearLayout>
